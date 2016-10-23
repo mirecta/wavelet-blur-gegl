@@ -1,0 +1,704 @@
+Index: krita/krita.action
+===================================================================
+--- krita/krita.action
++++ krita/krita.action
+@@ -2616,6 +2616,18 @@
+       <isCheckable>false</isCheckable>
+       <statusTip></statusTip>
+     </Action>
++    <Action name="waveletdecompose">
++      <icon></icon>
++      <text>Wavelet Decompose ...</text>
++      <whatsThis></whatsThis>
++      <toolTip>Wavelet Decompose</toolTip>
++      <iconText>Wavelet Decompose</iconText>
++      <activationFlags>1000</activationFlags>
++      <activationConditions>1</activationConditions>
++      <shortcut></shortcut>
++      <isCheckable>false</isCheckable>
++      <statusTip></statusTip>
++    </Action>
+     <Action name="mirrorNodeX">
+       <icon>symmetry-horizontal</icon>
+       <text>Mirror Layer Hori&amp;zontally</text>
+Index: krita/krita.xmlgui
+===================================================================
+--- krita/krita.xmlgui
++++ krita/krita.xmlgui
+@@ -202,6 +202,7 @@
+         <Action name="split_alpha_save_merged"/>
+       </Menu>
+       <Action name="layersplit"/>
++      <Action name="waveletdecompose"/>
+       <Separator/>
+       <Action name="mirrorNodeX"/>
+       <Action name="mirrorNodeY"/>
+Index: plugins/extensions/CMakeLists.txt
+===================================================================
+--- plugins/extensions/CMakeLists.txt
++++ plugins/extensions/CMakeLists.txt
+@@ -14,6 +14,7 @@
+ add_subdirectory( layergroupswitcher )
+ add_subdirectory( resourcemanager )
+ add_subdirectory( layersplit )
++add_subdirectory( waveletdecompose )
+ 
+ # Allow to skip building GMIC plugin
+ option(WITH_GMIC "Build the G'Mic plugin" ON)
+Index: plugins/extensions/waveletdecompose/CMakeLists.txt
+===================================================================
+--- /dev/null
++++ plugins/extensions/waveletdecompose/CMakeLists.txt
+@@ -0,0 +1,14 @@
++set(kritawaveletdecompose_SOURCES
++    waveletdecompose.cpp
++    dlg_waveletdecompose.cpp
++    kis_wavelet_kernel.cpp
++    )
++
++ki18n_wrap_ui(kritawaveletdecompose_SOURCES
++    wdg_waveletdecompose.ui
++    )
++
++add_library(kritawaveletdecompose MODULE ${kritawaveletdecompose_SOURCES})
++target_link_libraries(kritawaveletdecompose kritaui)
++install(TARGETS kritawaveletdecompose  DESTINATION ${KRITA_PLUGIN_INSTALL_DIR})
++install( FILES  waveletdecompose.xmlgui  DESTINATION ${DATA_INSTALL_DIR}/kritaplugins)
+Index: plugins/extensions/waveletdecompose/dlg_waveletdecompose.h
+===================================================================
+--- /dev/null
++++ plugins/extensions/waveletdecompose/dlg_waveletdecompose.h
+@@ -0,0 +1,60 @@
++/*
++ *
++ *  Copyright (c) 2016 Miroslav Talasek <miroslav.talasek@seznam.cz>
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
++ */
++#ifndef DLG_WAVELETDECOMPOSE
++#define DLG_WAVELETDECOMPOSE
++
++#include <KoDialog.h>
++
++#include "ui_wdg_waveletdecompose.h"
++
++class WdgWaveletDecompose : public QWidget, public Ui::WdgWaveletDecompose
++{
++    Q_OBJECT
++
++public:
++    WdgWaveletDecompose(QWidget *parent) : QWidget(parent) {
++        setupUi(this);
++    }
++};
++
++class DlgWaveletDecompose: public KoDialog
++{
++
++    Q_OBJECT
++
++public:
++
++    DlgWaveletDecompose(QWidget * parent = 0,
++                               const char* name = 0);
++    ~DlgWaveletDecompose();
++
++    void setScales(quint32 scales);
++    qint32 scales();
++
++private Q_SLOTS:
++
++    void okClicked();
++
++private:
++
++    WdgWaveletDecompose * m_page;
++
++};
++
++#endif // DLG_WAVELETDECOMPOSE
+Index: plugins/extensions/waveletdecompose/dlg_waveletdecompose.cpp
+===================================================================
+--- /dev/null
++++ plugins/extensions/waveletdecompose/dlg_waveletdecompose.cpp
+@@ -0,0 +1,71 @@
++/*
++ *
++ *  Copyright (c) 2016 Miroslav Talasek <miroslav.talasek@seznam.cz>
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
++ */
++
++#include "dlg_waveletdecompose.h"
++
++#include <klocalizedstring.h>
++#include <kis_debug.h>
++
++DlgWaveletDecompose::DlgWaveletDecompose(QWidget *  parent,
++                                       const char * name)
++        : KoDialog(parent)
++{
++    setCaption(i18n("WaveletDecompose"));
++    setButtons(Ok | Cancel);
++    setDefaultButton(Ok);
++    setObjectName(name);
++
++    m_page = new WdgWaveletDecompose(this);
++    Q_CHECK_PTR(m_page);
++     m_page->layout()->setMargin(0);
++     m_page->setObjectName("wavelet_decompose");
++
++    setMainWidget(m_page);
++    resize(m_page->sizeHint());
++
++    connect(this, SIGNAL(okClicked()),
++            this, SLOT(okClicked()));
++
++}
++
++DlgWaveletDecompose::~DlgWaveletDecompose()
++{
++    delete m_page;
++}
++
++void DlgWaveletDecompose::setScales(quint32 scales)
++{
++    m_page->scales->setValue(scales);
++
++}
++
++
++qint32 DlgWaveletDecompose::scales()
++{
++    return m_page->scales->value();
++}
++
++
++// SLOTS
++
++void DlgWaveletDecompose::okClicked()
++{
++    accept();
++}
++
+Index: plugins/extensions/waveletdecompose/kis_wavelet_kernel.h
+===================================================================
+--- /dev/null
++++ plugins/extensions/waveletdecompose/kis_wavelet_kernel.h
+@@ -0,0 +1,54 @@
++/*
++ *  Copyright (c) 2016 Miroslav Talasek <miroslav.talasek@seznam.cz>
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
++ */
++
++#ifndef __KIS_WAVELET_KERNEL_H
++#define __KIS_WAVELET_KERNEL_H
++
++#include "kritaimage_export.h"
++#include "kis_types.h"
++
++#include <Eigen/Core>
++using namespace Eigen;
++
++class QRect;
++
++class KRITAIMAGE_EXPORT KisWaveletKernel
++{
++public:
++    static Matrix<qreal, Dynamic, Dynamic>
++        createHorizontalMatrix(qreal radius);
++
++    static Matrix<qreal, Dynamic, Dynamic>
++        createVerticalMatrix(qreal radius);
++
++    static KisConvolutionKernelSP
++        createHorizontalKernel(qreal radius);
++
++    static KisConvolutionKernelSP
++        createVerticalKernel(qreal radius);
++
++    static int kernelSizeFromRadius(qreal radius);
++
++    static void applyWavelet(KisPaintDeviceSP device,
++                              const QRect& rect,
++                              qreal xRadius, qreal yRadius,
++                              const QBitArray &channelFlags,
++                              KoUpdater *updater);
++};
++
++#endif /* __KIS_WAVELET_KERNEL_H */
+Index: plugins/extensions/waveletdecompose/kis_wavelet_kernel.cpp
+===================================================================
+--- /dev/null
++++ plugins/extensions/waveletdecompose/kis_wavelet_kernel.cpp
+@@ -0,0 +1,142 @@
++/*
++ *  Copyright (c) 2016 Miroslav Talasek <miroslav.talasek@seznam.cz>
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
++ */
++
++#include "kis_wavelet_kernel.h"
++
++#include "kis_convolution_kernel.h"
++#include <kis_convolution_painter.h>
++#include <QRect>
++
++
++
++int KisWaveletKernel::kernelSizeFromRadius(qreal radius)
++{
++    return 2 * ceil(radius) + 1;
++}
++
++Matrix<qreal, Dynamic, Dynamic>
++KisWaveletKernel::createHorizontalMatrix(qreal radius)
++{
++    int kernelSize = kernelSizeFromRadius(radius);
++    Matrix<qreal, Dynamic, Dynamic> matrix(1, kernelSize);
++
++    /**
++     * The kernel size should always be odd, then the position of the
++     * central pixel can be easily calculated
++     */
++    KIS_ASSERT_RECOVER_NOOP(kernelSize & 0x1);
++    const int center = kernelSize / 2;
++
++    for (int x = 0; x < kernelSize; x++) {
++        if (x == 0 || x == kernelSize - 1)
++            matrix(0, x) = 0.25;
++        else if (x == center)
++            matrix(0, x) = 0.5;
++        else
++            matrix(0, x) = 0;
++    }
++    
++    return matrix;
++}
++
++Matrix<qreal, Dynamic, Dynamic>
++KisWaveletKernel::createVerticalMatrix(qreal radius)
++{
++    int kernelSize = kernelSizeFromRadius(radius);
++    Matrix<qreal, Dynamic, Dynamic> matrix(kernelSize, 1);
++
++
++    /**
++     * The kernel size should always be odd, then the position of the
++     * central pixel can be easily calculated
++     */
++    KIS_ASSERT_RECOVER_NOOP(kernelSize & 0x1);
++    const int center = kernelSize / 2;
++
++    for (int y = 0; y < kernelSize; y++) {
++        if (y == 0 || y == kernelSize - 1)
++            matrix(y, 0) = 0.25;
++        else if (y == center)
++            matrix(y, 0) = 0.5;
++        else
++            matrix(y, 0) = 0;
++    }
++
++    return matrix;
++}
++
++KisConvolutionKernelSP
++KisWaveletKernel::createHorizontalKernel(qreal radius)
++{
++    Matrix<qreal, Dynamic, Dynamic> matrix = createHorizontalMatrix(radius);
++    return KisConvolutionKernel::fromMatrix(matrix, 0, matrix.sum());
++}
++
++KisConvolutionKernelSP
++KisWaveletKernel::createVerticalKernel(qreal radius)
++{
++    Matrix<qreal, Dynamic, Dynamic> matrix = createVerticalMatrix(radius);
++    return KisConvolutionKernel::fromMatrix(matrix, 0, matrix.sum());
++}
++
++void KisWaveletKernel::applyWavelet(KisPaintDeviceSP device,
++                                      const QRect& rect,
++                                      qreal xRadius, qreal yRadius,
++                                      const QBitArray &channelFlags,
++                                      KoUpdater *progressUpdater)
++{
++    QPoint srcTopLeft = rect.topLeft();
++
++    if (xRadius > 0.0 && yRadius > 0.0) {
++        KisPaintDeviceSP interm = new KisPaintDevice(device->colorSpace());
++
++        KisConvolutionKernelSP kernelHoriz = KisWaveletKernel::createHorizontalKernel(xRadius);
++        KisConvolutionKernelSP kernelVertical = KisWaveletKernel::createVerticalKernel(yRadius);
++
++        qreal verticalCenter = qreal(kernelVertical->height()) / 2.0;
++
++        KisConvolutionPainter horizPainter(interm);
++        horizPainter.setChannelFlags(channelFlags);
++        horizPainter.setProgress(progressUpdater);
++        horizPainter.applyMatrix(kernelHoriz, device,
++                                 srcTopLeft - QPoint(0, ceil(verticalCenter)),
++                                 srcTopLeft - QPoint(0, ceil(verticalCenter)),
++                                 rect.size() + QSize(0, 2 * ceil(verticalCenter)), BORDER_REPEAT);
++
++        KisConvolutionPainter verticalPainter(device);
++        verticalPainter.setChannelFlags(channelFlags);
++        verticalPainter.setProgress(progressUpdater);
++        verticalPainter.applyMatrix(kernelVertical, interm, srcTopLeft, srcTopLeft, rect.size(), BORDER_REPEAT);
++
++    } else if (xRadius > 0.0) {
++        KisConvolutionPainter painter(device);
++        painter.setChannelFlags(channelFlags);
++        painter.setProgress(progressUpdater);
++
++        KisConvolutionKernelSP kernelHoriz = KisWaveletKernel::createHorizontalKernel(xRadius);
++        painter.applyMatrix(kernelHoriz, device, srcTopLeft, srcTopLeft, rect.size(), BORDER_REPEAT);
++
++    } else if (yRadius > 0.0) {
++        KisConvolutionPainter painter(device);
++        painter.setChannelFlags(channelFlags);
++        painter.setProgress(progressUpdater);
++
++        KisConvolutionKernelSP kernelVertical = KisWaveletKernel::createVerticalKernel(yRadius);
++        painter.applyMatrix(kernelVertical, device, srcTopLeft, srcTopLeft, rect.size(), BORDER_REPEAT);
++    }
++}
+Index: plugins/extensions/waveletdecompose/kritawaveletdecompose.json
+===================================================================
+--- /dev/null
++++ plugins/extensions/waveletdecompose/kritawaveletdecompose.json
+@@ -0,0 +1,9 @@
++{
++    "Id": "Wavelet decomposer",
++    "Type": "Service",
++    "X-KDE-Library": "kritawaveletdecompose",
++    "X-KDE-ServiceTypes": [
++        "Krita/ViewPlugin"
++    ],
++    "X-Krita-Version": "28"
++}
+Index: plugins/extensions/waveletdecompose/waveletdecompose.h
+===================================================================
+--- /dev/null
++++ plugins/extensions/waveletdecompose/waveletdecompose.h
+@@ -0,0 +1,40 @@
++/*
++ * Copyright (C) 2016 Miroslav Talasek <miroslav.talasek@seznam.cz>
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Library General Public
++ * License as published by the Free Software Foundation; either
++ * version 2 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Library General Public License for more details.
++ *
++ * You should have received a copy of the GNU Library General Public License
++ * along with this library; see the file COPYING.LIB.  If not, write to
++ * the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
++ * Boston, MA 02110-1301, USA.
++ */
++#ifndef WAVELETDECOMPOSE_H
++#define WAVETETDECOMPOSE_H
++
++#include <QVariant>
++
++#include <QUrl>
++#include <kis_view_plugin.h>
++
++class WaveletDecompose : public KisViewPlugin
++{
++    Q_OBJECT
++public:
++    WaveletDecompose(QObject *parent, const QVariantList &);
++    virtual ~WaveletDecompose();
++
++private Q_SLOTS:
++
++    void slotWaveletDecompose();
++
++};
++
++#endif // WAVELETDECOMPOSE_H
+Index: plugins/extensions/waveletdecompose/waveletdecompose.cpp
+===================================================================
+--- /dev/null
++++ plugins/extensions/waveletdecompose/waveletdecompose.cpp
+@@ -0,0 +1,162 @@
++/*
++ * Copyright (C) 2016 Miroslav Talasek <miroslav.talasek@seznam.cz>
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Library General Public
++ * License as published by the Free Software Foundation; either
++ * version 2 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Library General Public License for more details.
++ *
++ * You should have received a copy of the GNU Library General Public License
++ * along with this library; see the file COPYING.LIB.  If not, write to
++ * the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
++ * Boston, MA 02110-1301, USA.
++ */
++
++#include "waveletdecompose.h"
++
++#include <QMap>
++#include <QPointer>
++#include <QHash>
++
++#include <klocalizedstring.h>
++#include <kpluginfactory.h>
++
++#include <KoColorSpace.h>
++#include <KoChannelInfo.h>
++#include <KoColor.h>
++
++#include <kis_debug.h>
++#include <kis_types.h>
++#include <KisViewManager.h>
++#include <kis_image.h>
++#include <kis_wavelet_kernel.h>
++#include <kis_action.h>
++#include <KisDocument.h>
++#include <kis_node.h>
++#include <kis_painter.h>
++#include <kis_paint_device.h>
++#include <kis_paint_layer.h>
++#include <kis_group_layer.h>
++#include <kis_random_accessor_ng.h>
++#include "dlg_waveletdecompose.h"
++#include "kis_node_manager.h"
++#include "kis_node_commands_adapter.h"
++#include "kis_undo_adapter.h"
++
++#include <KoUpdater.h>
++#include <KoProgressUpdater.h>
++
++
++
++K_PLUGIN_FACTORY_WITH_JSON(WaveletDecomposeFactory, "kritawaveletdecompose.json", registerPlugin<WaveletDecompose>();)
++
++WaveletDecompose::WaveletDecompose(QObject *parent, const QVariantList &)
++    : KisViewPlugin(parent)
++{
++    KisAction *action  = createAction("waveletdecompose");
++    connect(action, SIGNAL(triggered()), this, SLOT(slotWaveletDecompose()));
++}
++
++WaveletDecompose::~WaveletDecompose()
++{
++}
++
++void WaveletDecompose::slotWaveletDecompose()
++{
++    DlgWaveletDecompose dlg(m_view->mainWindow(), "WaveletDecompose");
++        
++    if (dlg.exec() == QDialog::Accepted) {
++
++        QApplication::setOverrideCursor(Qt::WaitCursor);
++
++        KoProgressUpdater* pu = m_view->createProgressUpdater(KoProgressUpdater::Unthreaded);
++        pu->start(100, i18n("Wavelet Decompose"));
++        QPointer<KoUpdater> updater = pu->startSubtask();
++        updater->setProgress(0);
++
++        KisImageSP image = m_view->image();
++        if (!image) return;
++
++        image->lock();
++
++        KisLayerSP layer = m_view->activeLayer();
++        if (!layer) return;
++
++        KisPaintDeviceSP projection = new KisPaintDevice(*(layer->projection()), false, 0);
++        if (!projection) return;
++       
++        const KoColorSpace *cs = projection->colorSpace();
++
++        const KoCompositeOp* op = cs->compositeOp(COMPOSITE_GRAIN_EXTRACT);
++        
++        int scales = dlg.scales();
++        
++        QList<KisPaintDeviceSP> results;
++        const QBitArray flags(0);
++        
++        QRect rc = image->bounds();
++        
++        KisPaintDeviceSP original = projection;
++        
++        //main loop
++        for(int level = 0; level < scales; ++level){
++        
++            //copy original
++            KisPaintDeviceSP blur = new KisPaintDevice(*original, false, 0);
++           
++            //blur it
++            KisWaveletKernel::applyWavelet(blur, rc, 1 << level, 1 << level, flags, 0);
++       
++            //do grain extract blur from original
++            KisPainter painter(original);
++            painter.setCompositeOp(op);
++            painter.bitBlt(0, 0, blur, 0, 0, rc.width(), rc.height());
++            painter.end();
++        
++            //original is new scale and blur is new original
++            results << original;
++            original = blur;
++            updater->setProgress((level * 100) / scales);
++        }
++        //add new layers
++        KisUndoAdapter *undo = image->undoAdapter();
++        undo->beginMacro(kundo2_i18n("Wavelet decompose"));
++        
++        KisNodeCommandsAdapter adapter(m_view);
++        
++        KisGroupLayerSP baseGroup = image->rootLayer();
++
++        //add layer goup              
++        KisGroupLayerSP grp = new KisGroupLayer(image, i18n("Wavelet decompose"), OPACITY_OPAQUE_U8);
++        adapter.addNode(grp, baseGroup, 1);
++        baseGroup = grp;
++
++        //add scales
++        int i = 1;
++        const KoCompositeOp* op2 = cs->compositeOp(COMPOSITE_GRAIN_MERGE);
++        Q_FOREACH (const KisPaintDeviceSP &l, results) {
++            KisPaintLayerSP paintLayer = new KisPaintLayer(image, QStringLiteral("Scale %1").arg(i), OPACITY_OPAQUE_U8, l);
++            adapter.addNode(paintLayer, baseGroup, 0);
++            adapter.setCompositeOp(paintLayer, op2);
++            ++i;
++        }
++
++        //add residual
++        KisPaintLayerSP paintLayer = new KisPaintLayer(image, "Residual", OPACITY_OPAQUE_U8, original);
++        adapter.addNode(paintLayer, baseGroup, 0);
++        
++        undo->endMacro();
++        updater->setProgress(100);
++        image->unlock();
++        image->setModified();
++    }
++        
++    QApplication::restoreOverrideCursor();
++}
++
++#include "waveletdecompose.moc"
+Index: plugins/extensions/waveletdecompose/waveletdecompose.xmlgui
+===================================================================
+--- /dev/null
++++ plugins/extensions/waveletdecompose/waveletdecompose.xmlgui
+@@ -0,0 +1,8 @@
++<!DOCTYPE kpartgui SYSTEM "kpartgui.dtd">
++<kpartgui library="kritawaveletdecompose" version="6" translationDomain="krita">
++<MenuBar>
++    <Menu name="Layer"><text>&amp;Layer</text>
++	<Action name="waveletdecompose"/>
++    </Menu>
++</MenuBar>
++</kpartgui>
+Index: plugins/extensions/waveletdecompose/wdg_waveletdecompose.ui
+===================================================================
+--- /dev/null
++++ plugins/extensions/waveletdecompose/wdg_waveletdecompose.ui
+@@ -0,0 +1,47 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<ui version="4.0">
++ <class>WdgWaveletDecompose</class>
++ <widget class="QWidget" name="WdgWaveletDecompose">
++  <property name="geometry">
++   <rect>
++    <x>0</x>
++    <y>0</y>
++    <width>340</width>
++    <height>76</height>
++   </rect>
++  </property>
++  <property name="windowTitle">
++   <string>Wavelet Decompose</string>
++  </property>
++  <layout class="QFormLayout" name="formLayout">
++   <item row="0" column="0">
++    <widget class="QLabel" name="lblWaveletScales">
++     <property name="text">
++      <string>Wavelet scales:</string>
++     </property>
++     <property name="alignment">
++      <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
++     </property>
++    </widget>
++   </item>
++   <item row="0" column="1">
++    <widget class="QSpinBox" name="scales">
++     <property name="maximumSize">
++      <size>
++       <width>32767</width>
++       <height>100</height>
++      </size>
++     </property>
++     <property name="maximum">
++      <number>10</number>
++     </property>
++     <property name="value">
++      <number>5</number>
++     </property>
++    </widget>
++   </item>
++  </layout>
++ </widget>
++ <resources/>
++ <connections/>
++</ui>
