@@ -12,14 +12,11 @@
  * You should have received a copy of the GNU Lesser General Public
  * License along with GEGL; if not, see <http://www.gnu.org/licenses/>.
  *
- * Copyright 2006 Dominik Ernst <dernst@gmx.de>
- *           2014 Daniel Sabo
+ * Copyright 2016 Miroslav Talasek <miroslav.talasek@seznam.cz>
  *
- * Recursive Gauss IIR Filter as described by Young / van Vliet
- * in "Signal Processing 44 (1995) 139 - 151"
+ * Wavelet blur used in wavelet decompose filter
+ *  theory is from original wavelet plugin
  *
- * NOTE: The IIR filter should not be used for radius < 0.5, since it
- *       becomes very inaccurate.
  */
 
 #include "config.h"
@@ -40,8 +37,8 @@ property_double (radius, _("Radius"), 1.0)
 #else
 
 #define GEGL_OP_AREA_FILTER
-#define GEGL_OP_NAME     gaussian_blur
-#define GEGL_OP_C_SOURCE gaussian-blur.c
+#define GEGL_OP_NAME     wavelet_blur
+#define GEGL_OP_C_SOURCE wavelet-blur.c
 
 #include "gegl-op.h"
 #include <math.h>
@@ -81,27 +78,21 @@ wav_gen_convolve_matrix (gdouble   sigma,
       gint i,x;
       gdouble sum = 0;
 
-      for (i=0; i<matrix_length/2+1; i++)
-        {
-          gdouble y;
-
-          x = i - (matrix_length/2);
-          y = (1.0/(sigma*sqrt(2.0*G_PI))) * exp(-(x*x) / (2.0*sigma*sigma));
-
-          cmatrix[i] = y;
-          sum += cmatrix[i];
-        }
-
-      for (i=matrix_length/2 + 1; i<matrix_length; i++)
-        {
-          cmatrix[i] = cmatrix[matrix_length-i-1];
-          sum += cmatrix[i];
-        }
-
       for (i=0; i<matrix_length; i++)
-      {
-        cmatrix[i] /= sum;
-      }
+        {
+          if (i == 0 || i == matrix_length - 1)
+            {
+              cmatrix[i] = 0.25;
+            }
+          else if (i == matrix_length /2)
+            {
+              cmatrix[i] = 0.5;
+            }
+          else
+            {
+              cmatrix[i] = 0;
+            }
+        }
     }
 
   *cmatrix_p = cmatrix;
@@ -109,7 +100,7 @@ wav_gen_convolve_matrix (gdouble   sigma,
 }
 
 static inline void
-fir_get_mean_pixel_1D (gfloat  *src,
+wav_get_mean_pixel_1D (gfloat  *src,
                        gfloat  *dst,
                        gint     components,
                        gdouble *cmatrix,
@@ -135,7 +126,7 @@ fir_get_mean_pixel_1D (gfloat  *src,
 }
 
 static void
-fir_hor_blur (GeglBuffer          *src,
+wav_hor_blur (GeglBuffer          *src,
               GeglBuffer          *dst,
               const GeglRectangle *dst_rect,
               gdouble             *cmatrix,
@@ -148,7 +139,7 @@ fir_hor_blur (GeglBuffer          *src,
   GeglRectangle write_rect = {dst_rect->x, dst_rect->y, dst_rect->width, 1};
   gfloat *dst_buf     = gegl_malloc (write_rect.width * sizeof(gfloat) * 4);
 
-  GeglRectangle read_rect = {dst_rect->x - radius, dst_rect->y, dst_rect->width + 2 * radius, 1};
+  GeglRectangle read_rect = {dst_rect->x - radius, dst_rect->y, dst_rect->width + radius, 1};
   gfloat *src_buf    = gegl_malloc (read_rect.width * sizeof(gfloat) * 4);
 
   for (v = 0; v < dst_rect->height; v++)
@@ -157,7 +148,7 @@ fir_hor_blur (GeglBuffer          *src,
       read_rect.y     = dst_rect->y + v;
       write_rect.y    = dst_rect->y + v;
       gegl_buffer_get (src, &read_rect, 1.0, format, src_buf, GEGL_AUTO_ROWSTRIDE, GEGL_ABYSS_NONE);
-
+      //fix edges
       for (u = 0; u < dst_rect->width; u++)
         {
           fir_get_mean_pixel_1D (src_buf + offset,
@@ -176,7 +167,7 @@ fir_hor_blur (GeglBuffer          *src,
 }
 
 static void
-fir_ver_blur (GeglBuffer          *src,
+wav_ver_blur (GeglBuffer          *src,
               GeglBuffer          *dst,
               const GeglRectangle *dst_rect,
               gdouble             *cmatrix,
@@ -189,7 +180,7 @@ fir_ver_blur (GeglBuffer          *src,
   GeglRectangle write_rect = {dst_rect->x, dst_rect->y, 1, dst_rect->height};
   gfloat *dst_buf    = gegl_malloc (write_rect.height * sizeof(gfloat) * 4);
 
-  GeglRectangle read_rect  = {dst_rect->x, dst_rect->y - radius, 1, dst_rect->height + 2 * radius};
+  GeglRectangle read_rect  = {dst_rect->x, dst_rect->y - radius, 1, dst_rect->height + radius};
   gfloat *src_buf    = gegl_malloc (read_rect.height * sizeof(gfloat) * 4);
 
   for (u = 0; u < dst_rect->width; u++)
@@ -198,7 +189,7 @@ fir_ver_blur (GeglBuffer          *src,
       read_rect.x     = dst_rect->x + u;
       write_rect.x    = dst_rect->x + u;
       gegl_buffer_get (src, &read_rect, 1.0, format, src_buf, GEGL_AUTO_ROWSTRIDE, GEGL_ABYSS_NONE);
-
+      //fix edges
       for (v = 0; v < dst_rect->height; v++)
         {
           fir_get_mean_pixel_1D (src_buf + offset,
@@ -236,200 +227,6 @@ prepare (GeglOperation *operation)
                              babl_format ("RaGaBaA float"));
   gegl_operation_set_format (operation, "output",
                              babl_format ("RaGaBaA float"));
-}
-
-#include "opencl/gegl-cl.h"
-#include "gegl-buffer-cl-iterator.h"
-
-#include "opencl/gaussian-blur.cl.h"
-
-static GeglClRunData *cl_data = NULL;
-
-static gboolean
-cl_gaussian_blur (cl_mem                in_tex,
-                  cl_mem                out_tex,
-                  cl_mem                aux_tex,
-                  size_t                global_worksize,
-                  const GeglRectangle  *roi,
-                  const GeglRectangle  *src_rect,
-                  const GeglRectangle  *aux_rect,
-                  gfloat               *dmatrix_x,
-                  gint                  matrix_length_x,
-                  gint                  xoff,
-                  gfloat               *dmatrix_y,
-                  gint                  matrix_length_y,
-                  gint                  yoff)
-{
-  cl_int cl_err = 0;
-
-  size_t global_ws[2];
-
-  cl_mem cl_matrix_x = NULL;
-  cl_mem cl_matrix_y = NULL;
-
-  if (!cl_data)
-    {
-      const char *kernel_name[] = {"fir_ver_blur", "fir_hor_blur", NULL};
-      cl_data = gegl_cl_compile_and_build (gaussian_blur_cl_source, kernel_name);
-    }
-
-  if (!cl_data)
-    return TRUE;
-
-  cl_matrix_x = gegl_clCreateBuffer (gegl_cl_get_context(),
-                                     CL_MEM_COPY_HOST_PTR | CL_MEM_READ_ONLY,
-                                     matrix_length_x * sizeof(cl_float), dmatrix_x, &cl_err);
-  CL_CHECK;
-
-  cl_matrix_y = gegl_clCreateBuffer (gegl_cl_get_context(),
-                                     CL_MEM_COPY_HOST_PTR | CL_MEM_READ_ONLY,
-                                     matrix_length_y * sizeof(cl_float), dmatrix_y, &cl_err);
-  CL_CHECK;
-
-  global_ws[0] = aux_rect->width;
-  global_ws[1] = aux_rect->height;
-
-  cl_err = gegl_cl_set_kernel_args (cl_data->kernel[1],
-                                    sizeof(cl_mem), (void*)&in_tex,
-                                    sizeof(cl_int), (void*)&src_rect->width,
-                                    sizeof(cl_mem), (void*)&aux_tex,
-                                    sizeof(cl_mem), (void*)&cl_matrix_x,
-                                    sizeof(cl_int), (void*)&matrix_length_x,
-                                    sizeof(cl_int), (void*)&xoff,
-                                    NULL);
-  CL_CHECK;
-
-  cl_err = gegl_clEnqueueNDRangeKernel (gegl_cl_get_command_queue (),
-                                        cl_data->kernel[1], 2,
-                                        NULL, global_ws, NULL,
-                                        0, NULL, NULL);
-  CL_CHECK;
-
-
-  global_ws[0] = roi->width;
-  global_ws[1] = roi->height;
-
-  cl_err = gegl_cl_set_kernel_args (cl_data->kernel[0],
-                                    sizeof(cl_mem), (void*)&aux_tex,
-                                    sizeof(cl_int), (void*)&aux_rect->width,
-                                    sizeof(cl_mem), (void*)&out_tex,
-                                    sizeof(cl_mem), (void*)&cl_matrix_y,
-                                    sizeof(cl_int), (void*)&matrix_length_y,
-                                    sizeof(cl_int), (void*)&yoff,
-                                    NULL);
-  CL_CHECK;
-
-  cl_err = gegl_clEnqueueNDRangeKernel (gegl_cl_get_command_queue (),
-                                        cl_data->kernel[0], 2,
-                                        NULL, global_ws, NULL,
-                                        0, NULL, NULL);
-  CL_CHECK;
-
-  cl_err = gegl_clFinish (gegl_cl_get_command_queue ());
-  CL_CHECK;
-
-  cl_err = gegl_clReleaseMemObject (cl_matrix_x);
-  CL_CHECK_ONLY (cl_err);
-  cl_err = gegl_clReleaseMemObject (cl_matrix_y);
-  CL_CHECK_ONLY (cl_err);
-
-  return FALSE;
-
-error:
-  if (cl_matrix_x)
-    gegl_clReleaseMemObject (cl_matrix_x);
-  if (cl_matrix_y)
-    gegl_clReleaseMemObject (cl_matrix_y);
-
-  return TRUE;
-}
-
-static gboolean
-cl_process (GeglOperation       *operation,
-            GeglBuffer          *input,
-            GeglBuffer          *output,
-            const GeglRectangle *result)
-{
-  const Babl *in_format  = gegl_operation_get_format (operation, "input");
-  const Babl *out_format = gegl_operation_get_format (operation, "output");
-  gint err = 0;
-  gint j;
-
-  GeglOperationAreaFilter *op_area = GEGL_OPERATION_AREA_FILTER (operation);
-  GeglProperties          *o       = GEGL_PROPERTIES (operation);
-
-  gdouble *cmatrix_x, *cmatrix_y;
-  gint cmatrix_len_x, cmatrix_len_y;
-
-  gfloat *fmatrix_x, *fmatrix_y;
-
-  cmatrix_len_x = fir_gen_convolve_matrix (o->std_dev_x, &cmatrix_x);
-  cmatrix_len_y = fir_gen_convolve_matrix (o->std_dev_y, &cmatrix_y);
-
-  fmatrix_x = g_new (gfloat, cmatrix_len_x);
-  fmatrix_y = g_new (gfloat, cmatrix_len_y);
-
-  for(j=0; j<cmatrix_len_x; j++)
-    fmatrix_x[j] = (gfloat) cmatrix_x[j];
-
-  for(j=0; j<cmatrix_len_y; j++)
-    fmatrix_y[j] = (gfloat) cmatrix_y[j];
-
-  {
-  GeglBufferClIterator *i = gegl_buffer_cl_iterator_new (output,
-                                                         result,
-                                                         out_format,
-                                                         GEGL_CL_BUFFER_WRITE);
-
-  gint read = gegl_buffer_cl_iterator_add_2 (i,
-                                             input,
-                                             result,
-                                             in_format,
-                                             GEGL_CL_BUFFER_READ,
-                                             op_area->left,
-                                             op_area->right,
-                                             op_area->top,
-                                             op_area->bottom,
-                                             GEGL_ABYSS_NONE);
-
-  gint aux = gegl_buffer_cl_iterator_add_aux (i,
-                                              result,
-                                              in_format,
-                                              0,
-                                              0,
-                                              op_area->top,
-                                              op_area->bottom);
-
-  while (gegl_buffer_cl_iterator_next (i, &err) && !err)
-    {
-      err = cl_gaussian_blur(i->tex[read],
-                             i->tex[0],
-                             i->tex[aux],
-                             i->size[0],
-                             &i->roi[0],
-                             &i->roi[read],
-                             &i->roi[aux],
-                             fmatrix_x,
-                             cmatrix_len_x,
-                             op_area->left,
-                             fmatrix_y,
-                             cmatrix_len_y,
-                             op_area->top);
-
-      if (err)
-        {
-          gegl_buffer_cl_iterator_stop (i);
-          break;
-        }
-    }
-  }
-
-  g_free (fmatrix_x);
-  g_free (fmatrix_y);
-
-  g_free (cmatrix_x);
-  g_free (cmatrix_y);
-  return !err;
 }
 
 static gboolean
