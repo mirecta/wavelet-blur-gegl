@@ -64,7 +64,7 @@ wav_gen_convolve_matrix (gdouble   sigma,
   gint     matrix_length;
   gdouble *cmatrix;
 
-  matrix_length = fir_calc_convolve_matrix_length (sigma);
+  matrix_length = wav_calc_convolve_matrix_length (sigma);
   cmatrix = g_new (gdouble, matrix_length);
   if (!cmatrix)
     return 0;
@@ -125,6 +125,25 @@ wav_get_mean_pixel_1D (gfloat  *src,
     dst[c] = acc[c];
 }
 
+static void 
+wav_fix_bordes (GeglBuffer *buf,
+                gint buf_length,
+                gint radius)
+{
+  gint     i, c;
+  
+  //left side
+  for (i = 0; i < radius; ++i)
+    {
+     for (c = 0; c < components; ++c)
+       {
+        buf[i*components + c] = buf[2*radius*components - i*components + c];
+       }
+    }
+  
+}
+                
+
 static void
 wav_hor_blur (GeglBuffer          *src,
               GeglBuffer          *dst,
@@ -151,7 +170,7 @@ wav_hor_blur (GeglBuffer          *src,
       //fix edges
       for (u = 0; u < dst_rect->width; u++)
         {
-          fir_get_mean_pixel_1D (src_buf + offset,
+          wav_get_mean_pixel_1D (src_buf + offset,
                                  dst_buf + offset,
                                  4,
                                  cmatrix,
@@ -192,7 +211,7 @@ wav_ver_blur (GeglBuffer          *src,
       //fix edges
       for (v = 0; v < dst_rect->height; v++)
         {
-          fir_get_mean_pixel_1D (src_buf + offset,
+          wav_get_mean_pixel_1D (src_buf + offset,
                                  dst_buf + offset,
                                  4,
                                  cmatrix,
