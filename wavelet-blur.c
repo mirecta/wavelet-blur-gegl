@@ -124,35 +124,6 @@ wav_get_mean_pixel_1D (gfloat  *src,
     dst[c] = acc[c];
 }
 
-static void 
-wav_fix_borders (gfloat *buf,
-                 gint   buf_length,
-                 gint   radius,
-                 gint   components)
-{
-  gint     i, j, c;
-  gint pixel_cnt = buf_length / components;
-  
-  //left side
-  for (i = 0; i < radius; ++i)
-    {
-     for (c = 0; c < components; ++c)
-       {
-        buf[i * components + c] = buf[(2 * radius - i) * components + c];
-       }
-    }
-  //right side
-  j = 0;
-  for (i = pixel_cnt - 1; i > pixel_cnt - radius - 1; --i)
-    {
-     for (c = 0; c < components; ++c)
-       {
-        buf[i * components + c] = buf[(pixel_cnt - 2 * radius + j) * components + c];
-        ++j;
-       }
-    }
-}
-                
 static void
 wav_hor_blur (GeglBuffer          *src,
               GeglBuffer          *dst,
