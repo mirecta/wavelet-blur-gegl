@@ -46,25 +46,25 @@ property_double (radius, _("Radius"), 1.0)
 
 
 static gint
-wav_gen_convolve_matrix (gdouble   sigma,
+wav_gen_convolve_matrix (gdouble   radius,
                          gdouble **cmatrix_p);
 
 
 
 static gint
-wav_calc_convolve_matrix_length (gdouble rad)
+wav_calc_convolve_matrix_length (gdouble radius)
 {
-  return ceil (rad) * 2 + 1;
+  return ceil (radius) * 2 + 1;
 }
 
 static gint
-wav_gen_convolve_matrix (gdouble   sigma,
+wav_gen_convolve_matrix (gdouble   radius,
                          gdouble **cmatrix_p)
 {
   gint     matrix_length;
   gdouble *cmatrix;
 
-  matrix_length = wav_calc_convolve_matrix_length (sigma);
+  matrix_length = wav_calc_convolve_matrix_length (radius);
   cmatrix = g_new (gdouble, matrix_length);
   if (!cmatrix)
     return 0;
@@ -75,16 +75,15 @@ wav_gen_convolve_matrix (gdouble   sigma,
     }
   else
     {
-      gint i,x;
-      gdouble sum = 0;
+      gint i;
 
-      for (i=0; i<matrix_length; i++)
+      for (i = 0; i < matrix_length; i++)
         {
           if (i == 0 || i == matrix_length - 1)
             {
               cmatrix[i] = 0.25;
             }
-          else if (i == matrix_length /2)
+          else if (i == matrix_length / 2)
             {
               cmatrix[i] = 0.5;
             }
@@ -126,40 +125,51 @@ wav_get_mean_pixel_1D (gfloat  *src,
 }
 
 static void 
-wav_fix_bordes (GeglBuffer *buf,
-                gint buf_length,
-                gint radius)
+wav_fix_borders (gfloat *buf,
+                 gint   buf_length,
+                 gint   radius,
+                 gint   components)
 {
-  gint     i, c;
+  gint     i, j, c;
+  gint pixel_cnt = buf_length / components;
   
   //left side
   for (i = 0; i < radius; ++i)
     {
      for (c = 0; c < components; ++c)
        {
-        buf[i*components + c] = buf[2*radius*components - i*components + c];
+        buf[i * components + c] = buf[(2 * radius - i) * components + c];
        }
     }
-  
+  //right side
+  j = 0;
+  for (i = pixel_cnt - 1; i > pixel_cnt - radius - 1; --i)
+    {
+     for (c = 0; c < components; ++c)
+       {
+        buf[i * components + c] = buf[(pixel_cnt - 2 * radius + j) * components + c];
+        ++j;
+       }
+    }
 }
                 
-
 static void
 wav_hor_blur (GeglBuffer          *src,
               GeglBuffer          *dst,
               const GeglRectangle *dst_rect,
               gdouble             *cmatrix,
-              gint                 matrix_length)
+              gint                 matrix_length,
+              const Babl          *format)
 {
   gint        u, v;
   const gint  radius = matrix_length / 2;
-  const Babl *format = babl_format ("RaGaBaA float");
-
+  const gint  nc = babl_format_get_n_components (format);
+  
   GeglRectangle write_rect = {dst_rect->x, dst_rect->y, dst_rect->width, 1};
-  gfloat *dst_buf     = gegl_malloc (write_rect.width * sizeof(gfloat) * 4);
+  gfloat *dst_buf     = gegl_malloc (write_rect.width * sizeof(gfloat) * nc);
 
-  GeglRectangle read_rect = {dst_rect->x - radius, dst_rect->y, dst_rect->width + radius, 1};
-  gfloat *src_buf    = gegl_malloc (read_rect.width * sizeof(gfloat) * 4);
+  GeglRectangle read_rect = {dst_rect->x - radius, dst_rect->y, dst_rect->width + matrix_length -1, 1};
+  gfloat *src_buf    = gegl_malloc (read_rect.width * sizeof(gfloat) * nc);
 
   for (v = 0; v < dst_rect->height; v++)
     {
@@ -167,15 +177,15 @@ wav_hor_blur (GeglBuffer          *src,
       read_rect.y     = dst_rect->y + v;
       write_rect.y    = dst_rect->y + v;
       gegl_buffer_get (src, &read_rect, 1.0, format, src_buf, GEGL_AUTO_ROWSTRIDE, GEGL_ABYSS_NONE);
-      //fix edges
+
       for (u = 0; u < dst_rect->width; u++)
         {
           wav_get_mean_pixel_1D (src_buf + offset,
                                  dst_buf + offset,
-                                 4,
+                                 nc,
                                  cmatrix,
                                  matrix_length);
-          offset += 4;
+          offset += nc;
         }
 
       gegl_buffer_set (dst, &write_rect, 0, format, dst_buf, GEGL_AUTO_ROWSTRIDE);
@@ -190,17 +200,18 @@ wav_ver_blur (GeglBuffer          *src,
               GeglBuffer          *dst,
               const GeglRectangle *dst_rect,
               gdouble             *cmatrix,
-              gint                 matrix_length)
+              gint                 matrix_length,
+              const Babl          *format)
 {
   gint        u,v;
   const gint  radius = matrix_length / 2;
-  const Babl *format = babl_format ("RaGaBaA float");
+  const gint  nc = babl_format_get_n_components (format);
 
   GeglRectangle write_rect = {dst_rect->x, dst_rect->y, 1, dst_rect->height};
-  gfloat *dst_buf    = gegl_malloc (write_rect.height * sizeof(gfloat) * 4);
+  gfloat *dst_buf    = gegl_malloc (write_rect.height * sizeof(gfloat) * nc);
 
-  GeglRectangle read_rect  = {dst_rect->x, dst_rect->y - radius, 1, dst_rect->height + radius};
-  gfloat *src_buf    = gegl_malloc (read_rect.height * sizeof(gfloat) * 4);
+  GeglRectangle read_rect  = {dst_rect->x, dst_rect->y - radius , 1, dst_rect->height + matrix_length -1};
+  gfloat *src_buf    = gegl_malloc (read_rect.height * sizeof(gfloat) * nc);
 
   for (u = 0; u < dst_rect->width; u++)
     {
@@ -208,15 +219,15 @@ wav_ver_blur (GeglBuffer          *src,
       read_rect.x     = dst_rect->x + u;
       write_rect.x    = dst_rect->x + u;
       gegl_buffer_get (src, &read_rect, 1.0, format, src_buf, GEGL_AUTO_ROWSTRIDE, GEGL_ABYSS_NONE);
-      //fix edges
+ 
       for (v = 0; v < dst_rect->height; v++)
         {
           wav_get_mean_pixel_1D (src_buf + offset,
                                  dst_buf + offset,
-                                 4,
+                                 nc,
                                  cmatrix,
                                  matrix_length);
-          offset += 4;
+          offset += nc;
         }
 
       gegl_buffer_set (dst, &write_rect, 0, format, dst_buf, GEGL_AUTO_ROWSTRIDE);
@@ -232,20 +243,16 @@ prepare (GeglOperation *operation)
   GeglOperationAreaFilter *area = GEGL_OPERATION_AREA_FILTER (operation);
   GeglProperties          *o    = GEGL_PROPERTIES (operation);
 
-  gfloat fir_radius_x = fir_calc_convolve_matrix_length (o->std_dev_x) / 2;
-  gfloat fir_radius_y = fir_calc_convolve_matrix_length (o->std_dev_y) / 2;
-  gfloat iir_radius_x = o->std_dev_x * RADIUS_SCALE;
-  gfloat iir_radius_y = o->std_dev_y * RADIUS_SCALE;
 
   /* XXX: these should be calculated exactly considering o->filter, but we just
    * make sure there is enough space */
-  area->left = area->right = ceil (MAX (fir_radius_x, iir_radius_x));
-  area->top = area->bottom = ceil (MAX (fir_radius_y, iir_radius_y));
+  area->left = area->right = ceil (o->radius);
+  area->top = area->bottom = ceil (o->radius);
 
   gegl_operation_set_format (operation, "input",
-                             babl_format ("RaGaBaA float"));
+                             babl_format ("R'G'B' float"));
   gegl_operation_set_format (operation, "output",
-                             babl_format ("RaGaBaA float"));
+                             babl_format ("R'G'B' float"));
 }
 
 static gboolean
@@ -259,67 +266,27 @@ process (GeglOperation       *operation,
   GeglBuffer *temp;
   GeglOperationAreaFilter *op_area = GEGL_OPERATION_AREA_FILTER (operation);
   GeglProperties          *o       = GEGL_PROPERTIES (operation);
+  const Babl *format = gegl_operation_get_format (operation, "output");
 
   GeglRectangle temp_extend;
-  gdouble       B, b[4];
   gdouble      *cmatrix;
   gint          cmatrix_len;
-  gboolean      horizontal_irr;
-  gboolean      vertical_irr;
 
   rect.x      = result->x - op_area->left;
   rect.width  = result->width + op_area->left + op_area->right;
   rect.y      = result->y - op_area->top;
   rect.height = result->height + op_area->top + op_area->bottom;
 
-  if (o->filter == GEGL_GAUSSIAN_BLUR_FILTER_IIR)
-    {
-      horizontal_irr = TRUE;
-      vertical_irr   = TRUE;
-    }
-  else if (o->filter == GEGL_GAUSSIAN_BLUR_FILTER_FIR)
-    {
-      horizontal_irr = FALSE;
-      vertical_irr   = FALSE;
-    }
-  else /* GEGL_GAUSSIAN_BLUR_FILTER_AUTO */
-    {
-      horizontal_irr = o->std_dev_x > 1.0;
-      vertical_irr   = o->std_dev_y > 1.0;
-    }
-
-  if (gegl_operation_use_opencl (operation) && !(horizontal_irr | vertical_irr))
-    if (cl_process(operation, input, output, result))
-      return TRUE;
 
   gegl_rectangle_intersect (&temp_extend, &rect, gegl_buffer_get_extent (input));
   temp_extend.x      = result->x;
   temp_extend.width  = result->width;
-  temp = gegl_buffer_new (&temp_extend, babl_format ("RaGaBaA float"));
+  temp = gegl_buffer_new (&temp_extend, format);
 
-  if (horizontal_irr)
-    {
-      iir_young_find_constants (o->std_dev_x, &B, b);
-      iir_young_hor_blur (input, &rect, temp, &temp_extend, B, b);
-    }
-  else
-    {
-      cmatrix_len = fir_gen_convolve_matrix (o->std_dev_x, &cmatrix);
-      fir_hor_blur (input, temp, &temp_extend, cmatrix, cmatrix_len);
-      g_free (cmatrix);
-    }
-
-  if (vertical_irr)
-    {
-      iir_young_find_constants (o->std_dev_y, &B, b);
-      iir_young_ver_blur (temp, &rect, output, result, B, b);
-    }
-  else
-    {
-      cmatrix_len = fir_gen_convolve_matrix (o->std_dev_y, &cmatrix);
-      fir_ver_blur (temp, output, result, cmatrix, cmatrix_len);
-      g_free (cmatrix);
-    }
+  cmatrix_len = wav_gen_convolve_matrix (o->radius, &cmatrix);
+  wav_hor_blur (input, temp, &temp_extend, cmatrix, cmatrix_len, format);
+  wav_ver_blur (temp, output, result, cmatrix, cmatrix_len, format);
+  g_free (cmatrix);
 
   g_object_unref (temp);
   return  TRUE;
@@ -336,15 +303,15 @@ gegl_op_class_init (GeglOpClass *klass)
   filter_class    = GEGL_OPERATION_FILTER_CLASS (klass);
 
   operation_class->prepare        = prepare;
-  operation_class->opencl_support = TRUE;
+  operation_class->opencl_support = FALSE;
 
   filter_class->process           = process;
 
   gegl_operation_class_set_keys (operation_class,
-    "name",        "gegl:gaussian-blur-old",
-    "title",       _("Gaussian Blur"),
+    "name",        "gegl:wavelet-blur",
+    "title",       _("Wavelet Blur"),
     "categories",  "blur",
-    "description", _("Each result pixel is the average of the neighbouring pixels weighted by a normal distribution with specified standard deviation."),
+    "description", _("This bulr is used for wavetel decompose filter, each pixel is computed from other by HAT transform"),
     NULL);
 }
 
