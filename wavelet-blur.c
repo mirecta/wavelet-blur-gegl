@@ -26,7 +26,7 @@
 
 
 property_double (radius, _("Radius"), 1.0)
-    description (_("Radius of wavelet blur"))
+    description (_("Radius of the wavelet blur"))
     value_range (0.0, 1500.0)
     ui_range    (0.0, 256.0)
     ui_gamma    (3.0)
@@ -282,7 +282,7 @@ gegl_op_class_init (GeglOpClass *klass)
     "name",        "gegl:wavelet-blur",
     "title",       _("Wavelet Blur"),
     "categories",  "blur",
-    "description", _("This bulr is used for wavetel decompose filter, each pixel is computed from other by HAT transform"),
+    "description", _("This blur is used for the wavelet decomposition filter, each pixel is computed from another by the HAT transform"),
     NULL);
 }
 
